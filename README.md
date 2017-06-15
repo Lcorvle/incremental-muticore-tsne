@@ -1,8 +1,10 @@
-# Multicore t-SNE
+# Incremental-muticore t-SNE
 
-This is a multicore modification of [Barnes-Hut t-SNE](https://github.com/lvdmaaten/bhtsne) by L. Van der Maaten with python and Torch CFFI-based wrappers. This code also works **faster than sklearn.TSNE** on 1 core.
+This is a incremental modification of [Multicore-TSNE](https://github.com/DmitryUlyanov/Multicore-TSNE) by DmitryUlyanov with python and Torch CFFI-based wrappers. This code also works **faster than sklearn.TSNE** on 1 core.
 
 <center><img src="mnist-tsne.png" width="512"></center>
+
+# DmitryUlyanov's readMe as follows
 
 # What to expect
 

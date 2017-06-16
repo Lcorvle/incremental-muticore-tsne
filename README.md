@@ -2,6 +2,9 @@
 
 This is a incremental modification of [Multicore-TSNE](https://github.com/DmitryUlyanov/Multicore-TSNE) by DmitryUlyanov with python wrappers. This code also works **faster than sklearn.TSNE** on 1 core.
 
+You need to install as follows.
+For windows, you should use dll instead sh, to see "https://github.com/DmitryUlyanov/Multicore-TSNE/issues/2". 
+
 # DmitryUlyanov's readMe as follows
 
 # What to expect

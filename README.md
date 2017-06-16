@@ -5,6 +5,8 @@ This is a incremental modification of [Multicore-TSNE](https://github.com/Dmitry
 You need to install as follows.
 For windows, you should use dll instead sh, to see "https://github.com/DmitryUlyanov/Multicore-TSNE/issues/2". 
 
+Some dlls for incremental modification is in the directory dlls, you should copy it to the directory of your python3, for me, it is "C:\Users\xsx19\AppData\Local\Programs\Python\Python35-32\Lib\site-packages\MulticoreTSNE", and then you can run these python wrappers.
+
 # DmitryUlyanov's readMe as follows
 
 # What to expect

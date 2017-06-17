@@ -486,27 +486,6 @@ void TSNE::symmetrizeMatrix(int** _row_P, int** _col_P, double** _val_P, int N) 
     free(row_counts); row_counts  = NULL;
 }
 
-void TSNE::print_variance(int old_num, double * Y, double * old_Y)
-{
-    int i;
-    double average_x = .0, average_y = .0, variance_x = .0, variance_y = .0;
-    for (i = 0; i < old_num; i++) {
-        average_x += Y[i * 2] - old_Y[i * 2];
-        average_y += Y[i * 2 + 1] - old_Y[i * 2 + 1];
-    }
-    average_x /= double(old_num);
-    average_y /= double(old_num);
-    for (i = 0; i < old_num; i++) {
-        variance_x += (Y[i * 2] - old_Y[i * 2] - average_x) * (Y[i * 2] - old_Y[i * 2] - average_x);
-        variance_y += (Y[i * 2 + 1] - old_Y[i * 2 + 1] - average_y) * (Y[i * 2 + 1] - old_Y[i * 2 + 1] - average_y);
-    }
-    variance_x /= double(old_num);
-    variance_y /= double(old_num);
-    printf("variance_x: %f, variance_y: %f", variance_x, variance_y);
-    return;
-}
-
-
 // Makes data zero-mean
 void TSNE::zeroMean(double* X, int N, int D) {
 

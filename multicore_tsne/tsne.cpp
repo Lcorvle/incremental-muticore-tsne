@@ -1,4 +1,4 @@
-/*
+/*/*
  *  tsne.cpp
  *  Implementation of both standard and Barnes-Hut-SNE.
  *
@@ -13,14 +13,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <cstring>
+#include <string>
 #include <time.h>
 #include <omp.h>
 #include <iostream>
+#include <fstream>
 
 #include "quadtree.h"
 #include "vptree.h"
 #include "tsne.h"
 
+using namespace std;
 
 static const int QT_NO_DIMS = 2;
 
@@ -49,7 +52,7 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
     double eta = 200.0;
 
     // Allocate some memory
-    double* dY    = (double*) malloc(N * no_dims * sizeof(double));
+    double* dY    = (double*) calloc(N * no_dims , sizeof(double));
     double* uY    = (double*) calloc(N * no_dims , sizeof(double));
     double* gains = (double*) malloc(N * no_dims * sizeof(double));
     if (dY == NULL || uY == NULL || gains == NULL) { printf("Memory allocation failed!\n"); exit(1); }
@@ -77,7 +80,7 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
 
     // Compute asymmetric pairwise input similarities
     computeGaussianPerplexity(X, N, D, &row_P, &col_P, &val_P, perplexity, (int) (3 * perplexity));
-
+    
     // Symmetrize input similarities
     symmetrizeMatrix(&row_P, &col_P, &val_P, N);
     double sum_P = .0;
@@ -98,28 +101,60 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
         val_P[i] *= 12.0;
     }
 
-    // Initialize solution (randomly)
-    if (random_state != -1) {
-        srand(random_state);
-    }
-    for (int i = 0; i < N * no_dims; i++) {
-        if (i < old_num * no_dims){
-            Y[i] = old_Y[i];
+    // Initialize solution
+    if (old_num > 0) {
+        // Build ball tree on old data set
+        VpTree<DataPoint, euclidean_distance>* old_tree = new VpTree<DataPoint, euclidean_distance>();
+        std::vector<DataPoint> old_obj_X(old_num, DataPoint(D, -1, X));
+        for (int n = 0; n < old_num; n++) {
+            old_obj_X[n] = DataPoint(D, n, X + n * D);
         }
-        else{
+        old_tree->create(old_obj_X);
+        std::vector<DataPoint> indices;
+        std::vector<double> distances;
+        for (int i = 0; i < N * no_dims;) {
+            if (i < old_num * no_dims) {
+                Y[i] = old_Y[i];
+                i++;
+            }
+            else {
+                // Find nearest neighbors
+                int n = i / no_dims, K = 10;
+                old_tree->search(DataPoint(D, n, X + n * D), K, &indices, &distances);
+                Y[i] = .0;
+                Y[i + 1] = .0;
+                for (int k = 0; k < K; k++) {
+                    Y[i] += old_Y[indices[k].index() * no_dims];
+                    Y[i + 1] += old_Y[indices[k].index() * no_dims + 1];
+                }
+                Y[i] /= double(K);
+                Y[i + 1] /= double(K);
+                i += 2;
+            }
+        }
+    }
+    else {
+        if (random_state != -1) {
+            srand(random_state);
+        }
+        for (int i = 0; i < N * no_dims; i++) {
             Y[i] = randn() * .0001;
         }
     }
-
+    
     // Perform main training loop
     start = time(0);
     for (int iter = 0; iter < max_iter; iter++) {
 
         // Compute approximate gradient
-        computeGradient(row_P, col_P, val_P, Y, N, no_dims, dY, theta);
+        computeGradient(row_P, col_P, val_P, Y, N, no_dims, dY, theta, old_num);
 
 
         for (int i = 0; i < N * no_dims; i++) {
+            if (i < old_num * no_dims) {
+                Y[i] = old_Y[i];
+                continue;
+            }
             // Update gains
             gains[i] = (sign(dY[i]) != sign(uY[i])) ? (gains[i] + .2) : (gains[i] * .8);
             if (gains[i] < .01) {
@@ -130,15 +165,8 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
             uY[i] = momentum * uY[i] - eta * gains[i] * dY[i];
             Y[i] = Y[i] + uY[i];
         }
-
         // Make solution zero-mean
-        zeroMean(Y + old_num * no_dims, N - old_num, no_dims);
-
-        // keep incremental
-        for (int i = 0; i < old_num * no_dims; i++){
-            Y[i] = old_Y[i] * 0.5 + Y[i] * 0.5;
-        }
-        zeroMean(Y, old_num, no_dims);
+        zeroMean(Y, N, no_dims);
 
         // Stop lying about the P-values after a while, and switch momentum
         if (iter == stop_lying_iter) {
@@ -182,7 +210,7 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
 
 
 // Compute gradient of the t-SNE cost function (using Barnes-Hut algorithm)
-void TSNE::computeGradient(int* inp_row_P, int* inp_col_P, double* inp_val_P, double* Y, int N, int D, double* dC, double theta)
+void TSNE::computeGradient(int* inp_row_P, int* inp_col_P, double* inp_val_P, double* Y, int N, int D, double* dC, double theta, int old_num)
 {
 
     // Construct quadtree on current map
@@ -193,7 +221,7 @@ void TSNE::computeGradient(int* inp_row_P, int* inp_col_P, double* inp_val_P, do
     double* pos_f = (double*) calloc(N * D, sizeof(double));
     double* neg_f = (double*) calloc(N * D, sizeof(double));
     if (pos_f == NULL || neg_f == NULL) { printf("Memory allocation failed!\n"); exit(1); }
-    tree->computeEdgeForces(inp_row_P, inp_col_P, inp_val_P, N, pos_f);
+    tree->computeEdgeForces(inp_row_P, inp_col_P, inp_val_P, N, pos_f, old_num);
 
 
     #pragma omp parallel for reduction(+:sum_Q)
@@ -205,7 +233,7 @@ void TSNE::computeGradient(int* inp_row_P, int* inp_col_P, double* inp_val_P, do
     }
 
     // Compute final t-SNE gradient
-    for (int i = 0; i < N * D; i++) {
+    for (int i = old_num; i < N * D; i++) {
         dC[i] = pos_f[i] - (neg_f[i] / sum_Q);
     }
     free(pos_f);
@@ -456,6 +484,26 @@ void TSNE::symmetrizeMatrix(int** _row_P, int** _col_P, double** _val_P, int N) 
     // Free up some memery
     free(offset); offset = NULL;
     free(row_counts); row_counts  = NULL;
+}
+
+void TSNE::print_variance(int old_num, double * Y, double * old_Y)
+{
+    int i;
+    double average_x = .0, average_y = .0, variance_x = .0, variance_y = .0;
+    for (i = 0; i < old_num; i++) {
+        average_x += Y[i * 2] - old_Y[i * 2];
+        average_y += Y[i * 2 + 1] - old_Y[i * 2 + 1];
+    }
+    average_x /= double(old_num);
+    average_y /= double(old_num);
+    for (i = 0; i < old_num; i++) {
+        variance_x += (Y[i * 2] - old_Y[i * 2] - average_x) * (Y[i * 2] - old_Y[i * 2] - average_x);
+        variance_y += (Y[i * 2 + 1] - old_Y[i * 2 + 1] - average_y) * (Y[i * 2 + 1] - old_Y[i * 2 + 1] - average_y);
+    }
+    variance_x /= double(old_num);
+    variance_y /= double(old_num);
+    printf("variance_x: %f, variance_y: %f", variance_x, variance_y);
+    return;
 }
 
 

@@ -337,7 +337,7 @@ void QuadTree::computeNonEdgeForces(int point_index, double theta, double neg_f[
 
 
 // Computes edge forces
-void QuadTree::computeEdgeForces(int* row_P, int* col_P, double* val_P, int N, double* pos_f)
+void QuadTree::computeEdgeForces(int* row_P, int* col_P, double* val_P, int N, double* pos_f, int old_num)
 {
 
     // Loop over all edges in the graph
@@ -345,7 +345,7 @@ void QuadTree::computeEdgeForces(int* row_P, int* col_P, double* val_P, int N, d
     double D;
     double buff[QT_NO_DIMS];
 
-    for (int n = 0; n < N; n++) {
+    for (int n = old_num; n < N; n++) {
         ind1 = n * QT_NO_DIMS;
         for (int i = row_P[n]; i < row_P[n + 1]; i++) {
 

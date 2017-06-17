@@ -71,7 +71,7 @@ public:
 	void getAllIndices(int* indices);
 	int getDepth();
 	void computeNonEdgeForces(int point_index, double theta, double neg_f[], double* sum_Q, double buff[]);
-	void computeEdgeForces(int* row_P, int* col_P, double* val_P, int N, double* pos_f);
+	void computeEdgeForces(int* row_P, int* col_P, double* val_P, int N, double* pos_f, int old_num);
 	void print();
 
 private:

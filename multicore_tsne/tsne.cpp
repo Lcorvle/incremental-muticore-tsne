@@ -32,7 +32,7 @@ static const int QT_NO_DIMS = 2;
 // D -- input dimentionality
 // Y -- array to fill with the result of size [N, no_dims]
 // no_dims -- target dimentionality
-void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexity, double theta, int _num_threads, int max_iter, int random_state, int old_num, double* old_Y) {
+void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexity, double theta, int _num_threads, int max_iter, int random_state, int old_num) {
 
     if (N - 1 < 3 * perplexity) {
         printf("Perplexity too large for the number of data points!\n");
@@ -64,9 +64,6 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
     printf("Computing input similarities...\n");
     start = time(0);
     zeroMean(X, N, D);
-    if (old_num > 0){
-        zeroMean(old_Y, N - old_num, no_dims);
-    }
     double max_X = .0;
     for (int i = 0; i < N * D; i++) {
         if (X[i] > max_X) max_X = X[i];
@@ -100,9 +97,8 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
     for (int i = 0; i < row_P[N]; i++) {
         val_P[i] *= 12.0;
     }
-
     // Initialize solution
-    if (old_num > 0) {
+    if (old_num > 0.99 * N) {
         // Build ball tree on old data set
         VpTree<DataPoint, euclidean_distance>* old_tree = new VpTree<DataPoint, euclidean_distance>();
         std::vector<DataPoint> old_obj_X(old_num, DataPoint(D, -1, X));
@@ -112,36 +108,28 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
         old_tree->create(old_obj_X);
         std::vector<DataPoint> indices;
         std::vector<double> distances;
-        for (int i = 0; i < N * no_dims;) {
-            if (i < old_num * no_dims) {
-                Y[i] = old_Y[i];
-                i++;
+        for (int i = old_num * no_dims; i < N * no_dims; i += 2) {
+            // Find nearest neighbors
+            int n = i / no_dims, K = 5;
+            old_tree->search(DataPoint(D, n, X + n * D), K, &indices, &distances);
+            Y[i] = .0;
+            Y[i + 1] = .0;
+            for (int k = 0; k < K; k++) {
+                Y[i] += Y[indices[k].index() * no_dims];
+                Y[i + 1] += Y[indices[k].index() * no_dims + 1];
             }
-            else {
-                // Find nearest neighbors
-                int n = i / no_dims, K = 10;
-                old_tree->search(DataPoint(D, n, X + n * D), K, &indices, &distances);
-                Y[i] = .0;
-                Y[i + 1] = .0;
-                for (int k = 0; k < K; k++) {
-                    Y[i] += old_Y[indices[k].index() * no_dims];
-                    Y[i + 1] += old_Y[indices[k].index() * no_dims + 1];
-                }
-                Y[i] /= double(K);
-                Y[i + 1] /= double(K);
-                i += 2;
-            }
+            Y[i] /= double(K);
+            Y[i + 1] /= double(K);
         }
     }
     else {
         if (random_state != -1) {
             srand(random_state);
         }
-        for (int i = 0; i < N * no_dims; i++) {
+        for (int i = old_num * no_dims; i < N * no_dims; i++) {
             Y[i] = randn() * .0001;
         }
     }
-    
     // Perform main training loop
     start = time(0);
     for (int iter = 0; iter < max_iter; iter++) {
@@ -150,11 +138,8 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
         computeGradient(row_P, col_P, val_P, Y, N, no_dims, dY, theta, old_num);
 
 
-        for (int i = 0; i < N * no_dims; i++) {
-            if (i < old_num * no_dims) {
-                Y[i] = old_Y[i];
-                continue;
-            }
+        for (int i = old_num * no_dims; i < N * no_dims; i++) {
+
             // Update gains
             gains[i] = (sign(dY[i]) != sign(uY[i])) ? (gains[i] + .2) : (gains[i] * .8);
             if (gains[i] < .01) {
@@ -233,7 +218,7 @@ void TSNE::computeGradient(int* inp_row_P, int* inp_col_P, double* inp_val_P, do
     }
 
     // Compute final t-SNE gradient
-    for (int i = old_num; i < N * D; i++) {
+    for (int i = old_num * D; i < N * D; i++) {
         dC[i] = pos_f[i] - (neg_f[i] / sum_Q);
     }
     free(pos_f);
@@ -510,7 +495,6 @@ void TSNE::zeroMean(double* X, int N, int D) {
     free(mean); mean = NULL;
 }
 
-
 // Generates a Gaussian random number
 double TSNE::randn() {
     double x, y, radius;
@@ -531,12 +515,12 @@ extern "C"
     {
         printf("Performing t-SNE using %d cores.\n", _num_threads);
         TSNE tsne;
-        tsne.run(X, N, D, Y, no_dims, perplexity, theta, _num_threads, max_iter, random_state, 0, NULL);
+        tsne.run(X, N, D, Y, no_dims, perplexity, theta, _num_threads, max_iter, random_state, 0);
     }
-    extern void incremental_tsne_run_double(double* X, int N, int D, double* Y, int no_dims, double perplexity, double theta, int _num_threads, int max_iter, int random_state, int old_num, double* old_Y)
+    extern void incremental_tsne_run_double(double* X, int N, int D, double* Y, int no_dims, double perplexity, double theta, int _num_threads, int max_iter, int random_state, int old_num)
     {
         printf("Performing t-SNE using %d cores.\n", _num_threads);
         TSNE tsne;
-        tsne.run(X, N, D, Y, no_dims, perplexity, theta, _num_threads, max_iter, random_state, old_num, old_Y);
+        tsne.run(X, N, D, Y, no_dims, perplexity, theta, _num_threads, max_iter, random_state, old_num);
     }
 }

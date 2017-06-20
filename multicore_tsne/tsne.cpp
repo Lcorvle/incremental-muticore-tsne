@@ -16,6 +16,7 @@
 #include <string>
 #include <time.h>
 #include <omp.h>
+#include <ctime>
 #include <iostream>
 #include <fstream>
 
@@ -38,7 +39,10 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
         printf("Perplexity too large for the number of data points!\n");
         exit(1);
     }
-
+    edge = 0;
+    nonedge = 0;
+    total = 0;
+    initTree = 0;
     num_threads = _num_threads;
     omp_set_num_threads(num_threads);
 
@@ -47,6 +51,7 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
     // Set learning parameters
     float total_time = .0;
     time_t start, end;
+    clock_t xsx_start, xsx_end, xsx1, xsx2, xsx_total;
     int stop_lying_iter = 250, mom_switch_iter = 250;
     double momentum = .5, final_momentum = .8;
     double eta = 200.0;
@@ -59,7 +64,7 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
     for (int i = 0; i < N * no_dims; i++) {
         gains[i] = 1.0;
     }
-
+    xsx_start = clock();
     // Normalize input data (to prevent numerical problems)
     printf("Computing input similarities...\n");
     start = time(0);
@@ -71,13 +76,11 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
     for (int i = 0; i < N * D; i++) {
         X[i] /= max_X;
     }
-
     // Compute input similarities
     int* row_P; int* col_P; double* val_P;
 
     // Compute asymmetric pairwise input similarities
     computeGaussianPerplexity(X, N, D, &row_P, &col_P, &val_P, perplexity, (int) (3 * perplexity));
-    
     // Symmetrize input similarities
     symmetrizeMatrix(&row_P, &col_P, &val_P, N);
     double sum_P = .0;
@@ -87,30 +90,39 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
     for (int i = 0; i < row_P[N]; i++) {
         val_P[i] /= sum_P;
     }
+    xsx_end = clock();
+    cout << "xsx computing input similarities: " << (xsx_end - xsx_start) << endl;
 
     end = time(0);
     printf("Done in %4.2f seconds (sparsity = %f)!\nLearning embedding...\n", (float)(end - start) , (double) row_P[N] / ((double) N * (double) N));
 
     // Step 2
-
     // Lie about the P-values
     for (int i = 0; i < row_P[N]; i++) {
         val_P[i] *= 12.0;
     }
+
     // Initialize solution
-    if (old_num > 0.99 * N) {
-        // Build ball tree on old data set
+    // Build ball tree on old data set and update new points position
+    if (old_num > 0) {
+        xsx_start = clock();
         VpTree<DataPoint, euclidean_distance>* old_tree = new VpTree<DataPoint, euclidean_distance>();
         std::vector<DataPoint> old_obj_X(old_num, DataPoint(D, -1, X));
+        #pragma omp parallel for
         for (int n = 0; n < old_num; n++) {
             old_obj_X[n] = DataPoint(D, n, X + n * D);
         }
         old_tree->create(old_obj_X);
-        std::vector<DataPoint> indices;
-        std::vector<double> distances;
+        xsx_end = clock();
+        cout << "xsx build ball tree on old data set: " << (xsx_end - xsx_start) << endl;
+
+        xsx_start = clock();
+        #pragma omp parallel for
         for (int i = old_num * no_dims; i < N * no_dims; i += 2) {
             // Find nearest neighbors
-            int n = i / no_dims, K = 5;
+            std::vector<DataPoint> indices;
+            std::vector<double> distances;
+            int n = i / no_dims, K = min(5, (old_num / 300));
             old_tree->search(DataPoint(D, n, X + n * D), K, &indices, &distances);
             Y[i] = .0;
             Y[i + 1] = .0;
@@ -121,23 +133,42 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
             Y[i] /= double(K);
             Y[i + 1] /= double(K);
         }
+        delete old_tree;
+        old_obj_X.clear();
+        xsx_end = clock();
+        cout << "xsx init new data points' position: " << (xsx_end - xsx_start) << endl;
     }
-    else {
+    else{
+        xsx_start = clock();
         if (random_state != -1) {
             srand(random_state);
         }
         for (int i = old_num * no_dims; i < N * no_dims; i++) {
             Y[i] = randn() * .0001;
         }
+        xsx_end = clock();
+        cout << "xsx init all data points' position: " << (xsx_end - xsx_start) << endl;
     }
+
+    
+
+
+
     // Perform main training loop
     start = time(0);
+    xsx_start = clock();
+    xsx1 = 0;
+    xsx2 = 0;
+    xsx_total = 0;
     for (int iter = 0; iter < max_iter; iter++) {
 
         // Compute approximate gradient
+        xsx1 = xsx1 - clock();
         computeGradient(row_P, col_P, val_P, Y, N, no_dims, dY, theta, old_num);
+        xsx1 = xsx1 + clock();
 
-
+        xsx2 = xsx2 - clock();
+        #pragma omp parallel for
         for (int i = old_num * no_dims; i < N * no_dims; i++) {
 
             // Update gains
@@ -152,6 +183,7 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
         }
         // Make solution zero-mean
         zeroMean(Y, N, no_dims);
+        xsx2 = xsx2 + clock();
 
         // Stop lying about the P-values after a while, and switch momentum
         if (iter == stop_lying_iter) {
@@ -162,7 +194,7 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
         if (iter == mom_switch_iter) {
             momentum = final_momentum;
         }
-
+        xsx_total = xsx_total - clock();
         // Print out progress
         if ((iter > 0 && iter % 50 == 0) || (iter == max_iter - 1)) {
             end = time(0);
@@ -178,7 +210,18 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
             }
             start = time(0);
         }
+        xsx_total = xsx_total + clock();
     }
+
+    xsx_end = clock();
+    cout << "xsx main train loop: " << (xsx_end - xsx_start) << endl;
+    cout << "xsx main train loop, compute gradient: " << xsx1 << endl;
+    cout << "xsx main train loop, update Y: " << xsx2 << endl;
+    cout << "xsx main train loop, print process: " << xsx_total << endl;
+    cout << "xsx compute gradient, init tree: " << initTree << endl;
+    cout << "xsx compute gradient, edge: " << edge << endl;
+    cout << "xsx compute gradient, nonedge: " << nonedge << endl;
+    cout << "xsx compute gradient, total: " << total << endl;
     end = time(0); total_time += (float) (end - start) ;
 
     // Clean up memory
@@ -197,30 +240,35 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
 // Compute gradient of the t-SNE cost function (using Barnes-Hut algorithm)
 void TSNE::computeGradient(int* inp_row_P, int* inp_col_P, double* inp_val_P, double* Y, int N, int D, double* dC, double theta, int old_num)
 {
-
+    initTree -= clock();
     // Construct quadtree on current map
     QuadTree* tree = new QuadTree(Y, N);
-
+    initTree += clock();
     // Compute all terms required for t-SNE gradient
     double sum_Q = .0;
     double* pos_f = (double*) calloc(N * D, sizeof(double));
     double* neg_f = (double*) calloc(N * D, sizeof(double));
     if (pos_f == NULL || neg_f == NULL) { printf("Memory allocation failed!\n"); exit(1); }
+    edge -= clock();
     tree->computeEdgeForces(inp_row_P, inp_col_P, inp_val_P, N, pos_f, old_num);
+    edge += clock();
 
-
+    nonedge -= clock();
     #pragma omp parallel for reduction(+:sum_Q)
-    for (int n = 0; n < N; n++) {
+    for (int n = old_num; n < N; n++) {
         double buff[QT_NO_DIMS];
         double this_Q = .0;
         tree->computeNonEdgeForces(n, theta, neg_f + n * D, &this_Q, &buff[0]);
         sum_Q += this_Q;
     }
+    nonedge += clock();
 
+    total -= clock();
     // Compute final t-SNE gradient
     for (int i = old_num * D; i < N * D; i++) {
         dC[i] = pos_f[i] - (neg_f[i] / sum_Q);
     }
+    total += clock();
     free(pos_f);
     free(neg_f);
     delete tree;
@@ -276,6 +324,7 @@ void TSNE::computeGaussianPerplexity(double* X, int N, int D, int** _row_P, int*
     int* row_P = *_row_P;
     int* col_P = *_col_P;
     double* val_P = *_val_P;
+    clock_t xsx_start, xsx_end;
 
     //if(cur_P == NULL) { printf("Memory allocation failed!\n"); exit(1); }
     row_P[0] = 0;
@@ -286,6 +335,7 @@ void TSNE::computeGaussianPerplexity(double* X, int N, int D, int** _row_P, int*
     // Build ball tree on data set
     VpTree<DataPoint, euclidean_distance>* tree = new VpTree<DataPoint, euclidean_distance>();
     std::vector<DataPoint> obj_X(N, DataPoint(D, -1, X));
+    #pragma omp parallel for
     for (int n = 0; n < N; n++) {
         obj_X[n] = DataPoint(D, n, X + n * D);
     }

@@ -189,6 +189,7 @@ private:
 
             // Recursively build tree
             node->index = lower;
+            
             node->left = buildFromPoints(lower + 1, median);
             node->right = buildFromPoints(median, upper);
         }

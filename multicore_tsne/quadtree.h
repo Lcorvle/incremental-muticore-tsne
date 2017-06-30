@@ -8,9 +8,12 @@
  *  Multicore version by Dmitry Ulyanov, 2016. dmitry.ulyanov.msu@gmail.com
  */
 
-#ifndef QUADTREE_H
-#define QUADTREE_H
+#pragma once
 
+#include <math.h>
+#include <float.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 static inline double min(double x, double y) { return (x <= y ? x : y); }
 static inline double max(double x, double y) { return (x <= y ? y : x); }
@@ -80,5 +83,3 @@ private:
 	int getAllIndices(int* indices, int loc);
 	bool isChild(int test_index, int start, int end);
 };
-
-#endif

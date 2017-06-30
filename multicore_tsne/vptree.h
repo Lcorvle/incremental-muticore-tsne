@@ -7,7 +7,7 @@
  *
  *  Multicore version by Dmitry Ulyanov, 2016. dmitry.ulyanov.msu@gmail.com
  */
-
+#pragma once
 
 #include <stdlib.h>
 #include <algorithm>
@@ -15,61 +15,8 @@
 #include <stdio.h>
 #include <queue>
 #include <limits>
+#include <float.h>
 
-
-#ifndef VPTREE_H
-#define VPTREE_H
-
-class DataPoint
-{
-    int _D;
-    int _ind;
-    double* _x;
-
-public:
-    DataPoint() {
-        _D = 1;
-        _ind = -1;
-        _x = NULL;
-    }
-    DataPoint(int D, int ind, double* x) {
-        _D = D;
-        _ind = ind;
-        _x = (double*) malloc(_D * sizeof(double));
-        for (int d = 0; d < _D; d++) _x[d] = x[d];
-    }
-    DataPoint(const DataPoint& other) {                     // this makes a deep copy -- should not free anything
-        if (this != &other) {
-            _D = other.dimensionality();
-            _ind = other.index();
-            _x = (double*) malloc(_D * sizeof(double));
-            for (int d = 0; d < _D; d++) _x[d] = other.x(d);
-        }
-    }
-    ~DataPoint() { if (_x != NULL) free(_x); }
-    DataPoint& operator= (const DataPoint& other) {         // asignment should free old object
-        if (this != &other) {
-            if (_x != NULL) free(_x);
-            _D = other.dimensionality();
-            _ind = other.index();
-            _x = (double*) malloc(_D * sizeof(double));
-            for (int d = 0; d < _D; d++) _x[d] = other.x(d);
-        }
-        return *this;
-    }
-    int index() const { return _ind; }
-    int dimensionality() const { return _D; }
-    double x(int d) const { return _x[d]; }
-};
-
-
-double euclidean_distance(const DataPoint &t1, const DataPoint &t2) {
-    double dd = .0;
-    for (int d = 0; d < t1.dimensionality(); d++) {
-        dd += (t1.x(d) - t2.x(d)) * (t1.x(d) - t2.x(d));
-    }
-    return dd;
-}
 
 
 template<typename T, double (*distance)( const T&, const T& )>
@@ -189,7 +136,7 @@ private:
 
             // Recursively build tree
             node->index = lower;
-            
+
             node->left = buildFromPoints(lower + 1, median);
             node->right = buildFromPoints(median, upper);
         }
@@ -240,5 +187,3 @@ private:
         }
     }
 };
-
-#endif

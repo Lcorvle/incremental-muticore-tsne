@@ -9,9 +9,22 @@
  */
 
 
-#ifndef TSNE_H
-#define TSNE_H
+#pragma once
+#include <math.h>
+#include <float.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <cstring>
+#include <string>
+#include <time.h>
+#include <omp.h>
+#include <ctime>
+#include <iostream>
+#include <fstream>
 
+#include "quadtree.h"
+#include "vptree.h"
+#include "LevelList.h"
 
 static inline double sign(double x) { return (x == .0 ? .0 : (x < .0 ? -1.0 : 1.0)); }
 
@@ -32,6 +45,4 @@ private:
     void computeGaussianPerplexity(double* X, int N, int D, int** _row_P, int** _col_P, double** _val_P, double perplexity, int K);
     double randn();
 };
-
-#endif
 

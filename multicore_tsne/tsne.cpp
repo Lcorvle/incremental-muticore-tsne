@@ -8,20 +8,6 @@
  *  Multicore version by Dmitry Ulyanov, 2016. dmitry.ulyanov.msu@gmail.com
  */
 
-#include <math.h>
-#include <float.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <cstring>
-#include <string>
-#include <time.h>
-#include <omp.h>
-#include <ctime>
-#include <iostream>
-#include <fstream>
-
-#include "quadtree.h"
-#include "vptree.h"
 #include "tsne.h"
 
 using namespace std;
@@ -333,6 +319,7 @@ void TSNE::computeGaussianPerplexity(double* X, int N, int D, int** _row_P, int*
     }
 
     // Build ball tree on data set
+    cout << N << "," << D << endl;
     VpTree<DataPoint, euclidean_distance>* tree = new VpTree<DataPoint, euclidean_distance>();
     std::vector<DataPoint> obj_X(N, DataPoint(D, -1, X));
     #pragma omp parallel for
@@ -572,5 +559,23 @@ extern "C"
         printf("Performing t-SNE using %d cores.\n", _num_threads);
         TSNE tsne;
         tsne.run(X, N, D, Y, no_dims, perplexity, theta, _num_threads, max_iter, random_state, old_num);
+    }
+    extern void land_mark_sampling(int threads, int perp, int randWalksNum, int randWalksLength, int randWalksThrehold,
+        int endSize, double* data, int rowNum, int dim)//, int** _levelSizes, int** _indexes, int** _levelInfluenceSizes,
+        //int** _pointInfluenceSizes, int** _influenceIndexes, double** _influenceValues, int** _topLevelIndexes)
+    {
+        printf("Performing landmark sampling.\n");
+        omp_set_num_threads(threads);
+        LevelList levelList = LevelList(perp, randWalksNum, randWalksLength, randWalksThrehold, endSize);
+        levelList.initData(data, rowNum, dim);
+//        levelList.computeLevelList(_levelSizes, _indexes, _levelInfluenceSizes, _pointInfluenceSizes, _influenceIndexes, _influenceValues);
+//	    levelList.getTopLevelIndexes(_topLevelIndexes);
+    }
+    extern void getInfluenceIndexes(int threads, int* levelSizes, int* indexes, int* levelInfluenceSizes, int* pointInfluenceSizes,
+        int* influenceIndexes, double* influenceValues, int *indexSet, int size, int** _resultSet)
+    {
+        printf("Get influenced indexes.\n");
+        omp_set_num_threads(threads);
+        getInfluenceIndexes(levelSizes, indexes, levelInfluenceSizes, pointInfluenceSizes, influenceIndexes, influenceValues, indexSet, size, _resultSet);
     }
 }

@@ -1,5 +1,5 @@
 #include "Level.h"
-int Level:: getID() {
+int Level::getID() {
 	return levelId;
 }
 

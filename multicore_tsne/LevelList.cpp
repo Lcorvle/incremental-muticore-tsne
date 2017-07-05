@@ -2,10 +2,10 @@
 using namespace std;
 
 void LevelList::standardizeData(double* data, int rowNum, int dim) {
-    //compute mean and maximum, and set them to zero and one.
+	//compute mean and maximum, and set them to zero and one.
 	int i, j, k = 0;
 	double maxVal = 0, temp;
-	double* mean = (double*) calloc(dim, sizeof(double));
+	double* mean = (double*)calloc(dim, sizeof(double));
 	for (i = 0; i < rowNum; i++) {
 		for (j = 0; j < dim; j++) {
 			temp = data[i * dim + j];
@@ -22,69 +22,76 @@ void LevelList::standardizeData(double* data, int rowNum, int dim) {
 	maxVal -= mean[k];
 	for (i = 0; i < rowNum; i++) {
 		for (j = 0; j < dim; j++) {
-			data[i * dim + j] = (data[i * dim + j]  - mean[j]) / maxVal;
+			data[i * dim + j] = (data[i * dim + j] - mean[j]) / maxVal;
 		}
 	}
-	free(mean); mean  = NULL;
+	free(mean); mean = NULL;
 }
 
 void LevelList::initData(double* data, int rowNum, int dim) {
+	cout << "begin initData" << endl;
 	//make value between -1 to 1, and mean zero.
 	standardizeData(data, rowNum, dim);
 
 	//define variables
 	head = new Level(0, rowNum, 0);
 	tail = head;
-	SparseMatrix<double> transition(rowNum, rowNum), weight(1,rowNum), influence(0, 0);
+	SparseMatrix<double> transition(rowNum, rowNum), weight(1, rowNum), influence(0, 0);
 	vector<Eigen::Triplet<double> > tTransition, tWeight;
 	vector<int> indexes;
 
 	//compute indexes, weight and transition matrix of first level
 	// Build ball tree on data set
-	VpTree<DataPoint, euclidean_distance>* tree = new VpTree<DataPoint, euclidean_distance>();
-	vector<DataPoint> obj_X(rowNum, DataPoint(dim, -1, data));
-	#pragma omp parallel for
+	VpTree<DataPoint, euclideanDistance>* tree = new VpTree<DataPoint, euclideanDistance>();
+	vector<DataPoint> objX(rowNum, DataPoint(dim, -1, data));
+#pragma omp parallel for
 	for (int n = 0; n < rowNum; n++) {
-		obj_X[n] = DataPoint(dim, n, data + n * dim);
+		objX[n] = DataPoint(dim, n, data + n * dim);
 	}
-	tree->create(obj_X);
-	int i;
-	for (i = 0; i < rowNum; i++) {
+	tree->create(objX);
+	for (int i = 0; i < rowNum; i++) {
 		indexes.push_back(i);
 		tWeight.push_back(Eigen::Triplet<double>(0, i, 1.0));
-		std::vector<double> cur_P(perplexity * 3);
-		std::vector<DataPoint> indices;
-		std::vector<double> distances;
-		// Find nearest neighbors
-		tree->search(obj_X[i], 3 * perplexity + 1, &indices, &distances);
+	}
+	//compute transition, weight and index of the original level
+	cout << "begin compute transition" << endl;
+	int *tempTranSitionIndex = new int[rowNum * 3 * perplexity];
+	double *tempTranSitionValue = new double[rowNum * 3 * perplexity];
+    int stepsCompleted = 0;
+#pragma omp parallel for
+	for (int i = 0; i < rowNum; i++) {
+		vector<double> curP(perplexity * 3);
+		vector<DataPoint> indices;
+		vector<double> distances;
 
+		// Find nearest neighbors
+		tree->search(objX[i], 3 * perplexity + 1, &indices, &distances);
 		// Initialize some variables for binary search
 		bool found = false;
 		double beta = 1.0;
-		double min_beta = -DBL_MAX;
-		double max_beta = DBL_MAX;
+		double minBeta = -DBL_MAX;
+		double maxBeta = DBL_MAX;
 		double tol = 1e-5;
 
 		// Iterate until we found a good perplexity
-		int iter = 0; double sum_P;
+		int iter = 0; double sumP;
 		while (!found && iter < 200) {
 
 			// Compute Gaussian kernel row
-			#pragma omp parallel for
 			for (int m = 0; m < 3 * perplexity; m++) {
-				cur_P[m] = exp(-beta * distances[m + 1]);
+				curP[m] = exp(-beta * distances[m + 1]);
 			}
 
 			// Compute entropy of current row
-			sum_P = DBL_MIN;
+			sumP = DBL_MIN;
 			for (int m = 0; m < 3 * perplexity; m++) {
-				sum_P += cur_P[m];
+				sumP += curP[m];
 			}
 			double H = .0;
 			for (int m = 0; m < 3 * perplexity; m++) {
-				H += beta * (distances[m + 1] * cur_P[m]);
+				H += beta * (distances[m + 1] * curP[m]);
 			}
-			H = (H / sum_P) + log(sum_P);
+			H = (H / sumP) + log(sumP);
 
 			// Evaluate whether the entropy is within the tolerance level
 			double Hdiff = H - log(perplexity);
@@ -93,18 +100,18 @@ void LevelList::initData(double* data, int rowNum, int dim) {
 			}
 			else {
 				if (Hdiff > 0) {
-					min_beta = beta;
-					if (max_beta == DBL_MAX || max_beta == -DBL_MAX)
+					minBeta = beta;
+					if (maxBeta == DBL_MAX || maxBeta == -DBL_MAX)
 						beta *= 2.0;
 					else
-						beta = (beta + max_beta) / 2.0;
+						beta = (beta + maxBeta) / 2.0;
 				}
 				else {
-					max_beta = beta;
-					if (min_beta == -DBL_MAX || min_beta == DBL_MAX)
+					maxBeta = beta;
+					if (minBeta == -DBL_MAX || minBeta == DBL_MAX)
 						beta /= 2.0;
 					else
-						beta = (beta + min_beta) / 2.0;
+						beta = (beta + minBeta) / 2.0;
 				}
 			}
 
@@ -113,69 +120,98 @@ void LevelList::initData(double* data, int rowNum, int dim) {
 		}
 		// Compute transition matrix
 		beta = sqrt((1.0 / beta) / 2);
-		#pragma omp parallel for
 		for (int m = 0; m < 3 * perplexity; m++) {
-			cur_P[m] = exp(distances[m + 1] / beta);
+			curP[m] = exp(distances[m + 1] / beta);
 		}
-		sum_P = DBL_MIN;
+		sumP = DBL_MIN;
 		for (int m = 0; m < 3 * perplexity; m++) {
-			sum_P += cur_P[m];
+			sumP += curP[m];
 		}
-		for (int m = 0; m < 3 * perplexity; m++) {
-			tTransition.push_back(Eigen::Triplet<double>(i, indices[m + 1].index(), cur_P[m] / sum_P));
+        for (int m = 0; m < 3 * perplexity; m++) {
+            tempTranSitionIndex[i * 3 * perplexity + m] = indices[m + 1].index();
+            tempTranSitionValue[i * 3 * perplexity + m] = curP[m] / sumP;
+        }
+        // Print progress
+#pragma omp atomic
+		++stepsCompleted;
+
+		if (stepsCompleted % 10000 == 0)
+		{
+#pragma omp critical
+			printf(" - point %d of %d\n", stepsCompleted, rowNum);
 		}
 	}
+	cout << "end compute transition" << endl;
+	for (int i = 0;i < rowNum; i++) {
+	    for (int j = 0;j < 3 * perplexity; j++) {
+	        tTransition.push_back(Eigen::Triplet<double>(i, tempTranSitionIndex[i * 3 * perplexity + j], tempTranSitionValue[i * 3 * perplexity + j]));
+	    }
+	}
+
 	transition.setFromTriplets(tTransition.begin(), tTransition.end());
 	weight.setFromTriplets(tWeight.begin(), tWeight.end());
 	head->initData(NULL, transition, weight, influence, indexes);
 	length++;
+
+	// clear memory
+	delete[] tempTranSitionIndex;
+	delete[] tempTranSitionValue;
 	delete tree;
+	cout << "finish initData" << endl;
 }
 
-void getInfluenceIndexes(int* levelSizes, int* indexes, int* levelInfluenceSizes,
-	int* pointInfluenceSizes, int* influenceIndexes, double* influenceValues, int *indexSet, 
-	int size, int** _resultSet) {
+void getInfluenceIndexes(int* levelSizes, int* indexes, int* levelInfluenceSizes,	int* pointInfluenceSizes,
+        int* influenceIndexes, double* influenceValues, int *indexSet, int size, double minInfluenceValue, int** _resultSet) {
 	if (size < 0) {
 		return;
 	}
 	int levelID = levelSizes[0] - 2;
-	int i, j, k, beginIndex = levelSizes[levelSizes[0] - 1];
+	int i, j, n = levelSizes[levelSizes[0] - 1];
 	vector<int> levelIndexes;
+
+	// get the ID of the level which contain all index in indexSet
 	for (i = 0; i < size; i++) {
-		j = indexes[beginIndex + indexSet[i]];
+		j = indexes[n + indexSet[i]];
 		if (j < levelID) {
 			levelID = j;
 			levelIndexes.clear();
 		}
 		levelIndexes.push_back(indexSet[i]);
 	}
+
+	// check if no influence
 	if (levelID == 0 || pointInfluenceSizes[0] == 1) {
-		*_resultSet = new int[size];
+		*_resultSet = new int[1];
 		int* resultSet = *_resultSet;
-		#pragma omp parallel for
-		for (i = 0; i < size; i++) {
-			resultSet[i] = indexSet[i];
-		}
+		resultSet[0] = 0;
 		return;
 	}
+
+	// get those indexes in indexSet which in the level got
 	sort(levelIndexes.begin(), levelIndexes.end());
-	i = levelSizes[levelSizes[0] - levelID - 1];
-	beginIndex = levelSizes[levelSizes[0] - levelID];
+	int beginIndex = levelSizes[levelSizes[0] - levelID - 1];
+	int endIndex = levelSizes[levelSizes[0] - levelID];
 	j = 0;
 	int levelIndexSize = levelIndexes.size();
 	int* influenceSource = new int[levelIndexSize];
-	for (k = 0; k + i < beginIndex; k++) {
-		if (indexes[k + i] == levelIndexes[j]) {
-			influenceSource[j] = k;
+
+	// only consider the influence of those point in the lowest level
+	for (i = 0; i + beginIndex < endIndex; i++) {
+		if (indexes[i + beginIndex] == levelIndexes[j]) {
+			influenceSource[j] = i;
 			j++;
 			if (j == levelIndexSize) {
 				break;
 			}
 		}
 	}
-	k = levelInfluenceSizes[0] - levelID;
+
+	// get index range of those indexes in pointInfluenceSizes
+	n = levelInfluenceSizes[0] - levelID;
+	i = levelInfluenceSizes[n];
+
+	// binary search
 	int l, r, temp;
-	i = levelInfluenceSizes[k];
 	l = 1;
 	r = pointInfluenceSizes[0];
 	while (l <= r) {
@@ -191,7 +227,7 @@ void getInfluenceIndexes(int* levelSizes, int* indexes, int* levelInfluenceSizes
 			r = (l + r) / 2 - 1;
 		}
 	}
-	j = levelInfluenceSizes[k + 1];
+	j = levelInfluenceSizes[n + 1];
 	l = 1;
 	r = pointInfluenceSizes[0];
 	while (l <= r) {
@@ -207,43 +243,65 @@ void getInfluenceIndexes(int* levelSizes, int* indexes, int* levelInfluenceSizes
 			r = (l + r) / 2 - 1;
 		}
 	}
-	
+
+	// get indexes be influenced
 	l = 0;
-	levelIndexes.clear();
+	set<int> influenceTarget;
 	int startIndex = levelSizes[levelSizes[0] - levelID];
-	for (k = 0; k < j - i; k++) {
-		if (influenceSource[l] == k) {
-			r = pointInfluenceSizes[k + i + 1];
-			for (int m = pointInfluenceSizes[k + i]; m < r; m++) {
-				if (levelID == 1) {
-					levelIndexes.push_back(influenceIndexes[m]);
-				}
-				else {
-					levelIndexes.push_back(indexes[startIndex + influenceIndexes[m]]);
-				}
+	for (n = 0; n < j - i; n++) {
+		if (influenceSource[l] == n) {
+			r = pointInfluenceSizes[n + i + 1];
+			for (int m = pointInfluenceSizes[n + i]; m < r; m++) {
+			    if (influenceValues[m] >= minInfluenceValue) {
+			        if (levelID == 1) {
+                        influenceTarget.insert(influenceIndexes[m]);
+                    }
+                    else {
+                        influenceTarget.insert(indexes[startIndex + influenceIndexes[m]]);
+                    }
+			    }
 			}
 			l++;
 		}
 	}
-	j = levelIndexes.size();
+
+	// remove indexSet from result
+	i = 0;
+	for (set<int>::iterator it = influenceTarget.begin(); it != influenceTarget.end();) {
+		if (*it == indexSet[i]) {
+			influenceTarget.erase(it++);
+			i++;
+		}
+		else {
+			it++;
+		}
+	}
+
+	// translate result to int*
+	j = influenceTarget.size();
 	*_resultSet = new int[j + 1];
 	int* resultSet = *_resultSet;
 	resultSet[0] = j;
-	#pragma omp parallel for
-	for(i = 0;i < j;i++){
-		resultSet[i + 1] = levelIndexes[i];
+	i = 0;
+	for (set<int>::iterator it = influenceTarget.begin(); it != influenceTarget.end(); it++) {
+		resultSet[i + 1] = *it;
+		i++;
 	}
+
+	//free memory
 	delete[] influenceSource;
 }
 
 void LevelList::getTopLevelIndexes(int **_indexes) {
+
+	// tail level is the top level
 	vector<int> indexes = tail->getIndexes();
 	int levelSize = indexes.size();
 	*_indexes = new int[levelSize + 1];
 	int* result = *_indexes;
 	int i;
 	result[0] = levelSize;
-	#pragma omp parallel for
+#pragma omp parallel for
 	for (i = 0; i < levelSize; i++) {
 		result[i + 1] = indexes[i];
 	}
@@ -253,56 +311,53 @@ void LevelList::getTopLevelIndexes(int **_indexes) {
 vector<int> LevelList::computeNextLevelIndexes() {
 	vector<int> indexes, preIndexes = tail->getIndexes();
 	SparseMatrix<double> preTransition = tail->getTransitionMatrix().adjoint();
+
+	// rand walk in this level, and create next level by result
 	int i, j;
 	int tailSize = tail->getSize();
-	int* randomWalkResult = (int*) calloc(tailSize, sizeof(int));
-	bool flag = true;
-	while (flag) {
-		#pragma omp for
-		for (i = 0; i < tailSize; i++) {
-			//#pragma omp for
-			for (j = 0; j < walksNum; j++) {
-				int l = i;
-				for (int k = 0; k < walksLength; k++) {
-					double p = 0;
-					double randP = rand() / double(RAND_MAX + 1);
-					for (SparseMatrix<double>::InnerIterator it(preTransition, l); it; ++it)
-					{
-						p += it.value();
-						if (p >= randP) {
-							l = it.row();
-							break;
-						}
-					}
-				}
-				#pragma omp critical
-				{
-					randomWalkResult[l]++;
-				}
-			}
-		}
-		for (i = 0; i < tailSize; i++) {
-			if (randomWalkResult[i] > walksNum) {
-				flag = false;
-				break;
-			}
-		}
-		if (flag) {
-			for (i = 0; i < tailSize; i++) {
-				randomWalkResult[i] = 0;
-			}
-		}
-	}
-	
+	int* randomWalkResult = (int*)calloc(tailSize, sizeof(int));
+	clock_t t = clock();
+    #pragma omp for
+    for (i = 0; i < tailSize; i++) {
+        //#pragma omp for
+        for (j = 0; j < walksNum; j++) {
+            int l = i;
+            for (int k = 0; k < walksLength; k++) {
+                double p = 0;
+                double randP = rand() / double(RAND_MAX + 1);
+                for (SparseMatrix<double>::InnerIterator it(preTransition, l); it; ++it)
+                {
+                    p += it.value();
+                    if (p >= randP) {
+                        l = it.row();
+                        break;
+                    }
+                }
+            }
+#pragma omp critical
+            {
+                randomWalkResult[l]++;
+            }
+        }
+    }
+
+    cout << "rand walk cost " << clock() - t << endl;
+    // the next level has at least one index
+    int maxWalkNum = 0;
+    for (i = 0; i < tailSize; i++) {
+        if (randomWalkResult[i] > maxWalkNum) {
+            maxWalkNum = randomWalkResult[i];
+        }
+    }
 	j = threhold;
-	while (indexes.size() == 0) {
-		for (i = 0; i < tailSize; i++) {
-			if (randomWalkResult[i] > j) {
-				indexes.push_back(preIndexes[i]);
-			}
-		}
-		j--;
-	}
+    if (maxWalkNum < threhold) {
+        j = maxWalkNum;
+    }
+	for (i = 0; i < tailSize; i++) {
+        if (randomWalkResult[i] >= j) {
+            indexes.push_back(preIndexes[i]);
+        }
+    }
 	free(randomWalkResult);
 	randomWalkResult = NULL;
 	return indexes;
@@ -317,8 +372,9 @@ SparseMatrix<double> LevelList::computeNextLevelInfluences(vector<int> indexes) 
 	vector<Eigen::Triplet<double> > tInfluences;
 	int totalValue = indexes.size() * walksNum;
 	double p, randP;
-	int* flags = (int*) calloc(tailSize, sizeof(int));
-	for (i = 0,j = 0, l = indexes.size(); i < tailSize; i++) {
+	int* flags = (int*)calloc(tailSize, sizeof(int));
+	// compute influence from those end indexes to theirselves
+	for (i = 0, j = 0, l = indexes.size(); i < tailSize; i++) {
 		if (preIndexes[i] == indexes[j]) {
 			tInfluences.push_back(Eigen::Triplet<double>(i, j, double(walksNum)));
 			flags[i] = j + 1;
@@ -329,6 +385,7 @@ SparseMatrix<double> LevelList::computeNextLevelInfluences(vector<int> indexes) 
 		}
 	}
 
+	// rand walk until arrive a end indexes or move the limit times
 	for (i = 0; i < tailSize; i++) {
 		if (flags[i] == 0) {
 			for (j = 0; j < walksNum; j++) {
@@ -361,10 +418,26 @@ SparseMatrix<double> LevelList::computeNextLevelInfluences(vector<int> indexes) 
 }
 
 int LevelList::computeNextLevel() {
+
+	// compute next level indexes and influence first
+	cout << "computing next level indexes..." << endl;
+	clock_t t = clock();
 	vector<int> indexes = computeNextLevelIndexes();
+	cout << "compute index cost "<< clock() - t << endl;
+	cout << "computing next level influence..." << endl;
+	t = clock();
 	SparseMatrix<double> transition, weight, preWeight = tail->getWeight(), influence = computeNextLevelInfluences(indexes), transposeInfluence;
+	cout << "compute influence cost "<< clock() - t << endl;
 	transposeInfluence = influence.adjoint();
+
+	//compute weight and transition by matrix operation
+
+	cout << "computing next level weight..." << endl;
+	t = clock();
 	weight = preWeight * influence;
+	cout << "compute weight cost "<< clock() - t << endl;
+	cout << "computing next level transition..." << endl;
+	t = clock();
 	for (int k = 0; k < transposeInfluence.outerSize(); ++k) {
 		for (SparseMatrix<double>::InnerIterator it(transposeInfluence, k); it; ++it)
 		{
@@ -385,6 +458,7 @@ int LevelList::computeNextLevel() {
 		}
 	}
 	transition = transition.adjoint();
+	cout << "compute transition cost "<< clock() - t << endl;
 	Level* newLevel = new Level(tail->getID() + 1, indexes.size(), tail->getSize());
 	tail->setNext(newLevel);
 	newLevel->initData(tail, transition, weight, influence, indexes);
@@ -393,21 +467,22 @@ int LevelList::computeNextLevel() {
 	return indexes.size();
 }
 
-double euclidean_distance(const DataPoint &t1, const DataPoint &t2) {
-    double dd = .0;
-    for (int d = 0; d < t1.dimensionality(); d++) {
-        dd += (t1.x(d) - t2.x(d)) * (t1.x(d) - t2.x(d));
-    }
-    return dd;
+double euclideanDistance(const DataPoint &t1, const DataPoint &t2) {
+	double dd = .0;
+	for (int d = 0; d < t1.dimensionality(); d++) {
+		dd += (t1.x(d) - t2.x(d)) * (t1.x(d) - t2.x(d));
+	}
+	return dd;
 }
 
 void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _levelInfluenceSizes, int** _pointInfluenceSizes, int** _influenceIndexes, double** _influenceValues) {
 	int i = head->getSize();
 	while (i > endLevelSize) {
 		i = computeNextLevel();
+		cout << "Finish compute level" << tail->getID() << "(size = " << i << ")" << endl;
 	}
 
-	cout << "end compute levels..." << time(0) << endl;
+	cout << "Finish compute level list, creating record.." << endl;
 	vector<int> levelIndexes;
 	SparseMatrix<double> levelInfluence;
 	if (head == tail) {
@@ -450,7 +525,7 @@ void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _level
 	Level *p = tail;
 	int levelSizeSum = 1, influnceSizesSum = 1, k;
 	int headSize = head->getSize(), id;
-	int* levelCount = (int*) calloc(headSize, sizeof(int));
+	int* levelCount = (int*)calloc(headSize, sizeof(int));
 	while (p) {
 		//compute levelSizes
 		levelSizeSum += p->getSize();
@@ -478,7 +553,7 @@ void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _level
 		for (k = 0; k < levelInfluence.outerSize(); ++k) {
 			for (SparseMatrix<double>::InnerIterator it(levelInfluence, k); it; ++it)
 			{
-				vInfluenceValues.push_back(it.value());
+			    vInfluenceValues.push_back(it.value());
 				vInfluenceIndexes.push_back(it.row());
 			}
 			vPointInfluenceSizes.push_back(vInfluenceIndexes.size() + 1);
@@ -492,7 +567,7 @@ void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _level
 	int* levelSizes = *_levelSizes;
 	levelSizes[0] = vLevelSizes.size() + 1;
 	levelSizes[1] = 1;
-	#pragma omp parallel for
+#pragma omp parallel for
 	for (i = 0; i < vLevelSizes.size(); i++) {
 		levelSizes[i + 2] = vLevelSizes[i];
 	}
@@ -500,7 +575,7 @@ void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _level
 	*_indexes = new int[levelIndexes.size() + 1];
 	int* indexes = *_indexes;
 	indexes[0] = levelIndexes.size();
-	#pragma omp parallel for
+#pragma omp parallel for
 	for (i = 0; i < levelIndexes.size(); i++) {
 		indexes[i + 1] = levelIndexes[i];
 	}
@@ -509,7 +584,7 @@ void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _level
 	int* levelInfluenceSizes = *_levelInfluenceSizes;
 	levelInfluenceSizes[0] = vLevelInfluenceSizes.size() + 1;
 	levelInfluenceSizes[1] = 1;
-	#pragma omp parallel for
+#pragma omp parallel for
 	for (i = 0; i < vLevelInfluenceSizes.size(); i++) {
 		levelInfluenceSizes[i + 2] = vLevelInfluenceSizes[i];
 	}
@@ -518,7 +593,7 @@ void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _level
 	int* pointInfluenceSizes = *_pointInfluenceSizes;
 	pointInfluenceSizes[0] = vPointInfluenceSizes.size() + 1;
 	pointInfluenceSizes[1] = 1;
-	#pragma omp parallel for
+#pragma omp parallel for
 	for (i = 0; i < vPointInfluenceSizes.size(); i++) {
 		pointInfluenceSizes[i + 2] = vPointInfluenceSizes[i];
 	}
@@ -526,7 +601,7 @@ void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _level
 	*_influenceIndexes = new int[vInfluenceIndexes.size() + 1];
 	int* influenceIndexes = *_influenceIndexes;
 	influenceIndexes[0] = vInfluenceIndexes.size();
-	#pragma omp parallel for
+#pragma omp parallel for
 	for (i = 0; i < vInfluenceIndexes.size(); i++) {
 		influenceIndexes[i + 1] = vInfluenceIndexes[i];
 	}
@@ -534,10 +609,11 @@ void LevelList::computeLevelList(int** _levelSizes, int** _indexes, int** _level
 	*_influenceValues = new double[vInfluenceValues.size() + 1];
 	double* influenceValues = *_influenceValues;
 	influenceValues[0] = vInfluenceValues.size();
-	#pragma omp parallel for
-	for (i = 0; i < vInfluenceValues.size(); i++) {
-		influenceValues[i + 1] = vInfluenceValues[i];
-	}
+#pragma omp parallel for
+    for (i = 0; i < vInfluenceValues.size(); i++) {
+        influenceValues[i + 1] = vInfluenceValues[i];
+    }
 	free(levelCount);
 	levelCount = NULL;
 }
+

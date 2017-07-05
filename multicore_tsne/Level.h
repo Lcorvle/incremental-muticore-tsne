@@ -10,7 +10,7 @@ class Level {
 	vector<int> levelIndexes;
 	Level *next;
 	Level *pre;
-	
+
 
 public:
 	Level(int id, int size, int preSize) {

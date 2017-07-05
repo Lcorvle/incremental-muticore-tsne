@@ -107,20 +107,23 @@ void TSNE::run(double* X, int N, int D, double* Y, int noDims, double perplexity
 
 		xsxStart = clock();
 #pragma omp parallel for
-		for (int i = oldNum * noDims; i < N * noDims; i += 2) {
+		for (int i = oldNum * noDims; i < N * noDims; i += noDims) {
 			// Find nearest neighbors
 			std::vector<DataPoint> indices;
 			std::vector<double> distances;
 			int n = i / noDims, K = oldNum < 300? 1: min(5, (oldNum / 300));
 			oldTree->search(DataPoint(D, n, X + n * D), K, &indices, &distances);
-			Y[i] = .0;
-			Y[i + 1] = .0;
-			for (int k = 0; k < K; k++) {
-				Y[i] += Y[indices[k].index() * noDims];
-				Y[i + 1] += Y[indices[k].index() * noDims + 1];
+			for(int j = 0;j < noDims; j++) {
+				Y[i + j] = .0;
 			}
-			Y[i] /= double(K);
-			Y[i + 1] /= double(K);
+			for (int k = 0; k < K; k++) {
+				for(int j = 0;j < noDims; j++) {
+					Y[i + j] += Y[indices[k].index() * noDims + j];
+				}
+			}
+			for(int j = 0;j < noDims; j++) {
+				Y[i + j] /= double(K);
+			}
 		}
 		delete oldTree;
 		oldObjX.clear();
